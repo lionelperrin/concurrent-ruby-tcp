@@ -7,20 +7,24 @@ LOGGER.outputters = Log4r::Outputter.stdout
 Log4r::Outputter.stdout.formatter = Log4r::PatternFormatter.new :pattern => "%l %x: %m"
 
 class Worker
-  attr_accessor :ready, :socket
   def initialize(socket)
     LOGGER.debug "Server received new connection #{socket}"
     @socket = socket
-    @ready = true
+  end
+  def closed?
+    @socket.closed?
   end
   def close
     @socket.close
   end
+  def socket_id
+    @socket.to_s
+  end
   def run_task(*args)
-    LOGGER.debug "Server sending #{args} to #{socket}"
+    LOGGER.debug "Server sending #{args} to #{socket_id}"
     Marshal.dump(args, @socket)
     res, exc = Marshal.load(@socket)
-    LOGGER.debug "Server received #{res} #{exc} from #{socket}"
+    LOGGER.debug "Server received #{res} #{exc} from #{socket_id}"
     raise exc if exc
     res
   end
@@ -29,18 +33,22 @@ end
 class TCPWorkerPool
   def initialize(tcp_port = 2000)
     @tcp_port = tcp_port
-    @server = TCPServer.new @tcp_port
-    LOGGER.info "Server started on port #{@tcp_port}"
-    @workers = [] 
-    @worker_waiting_list = []
-    @th_server = Thread.new do
+    @workers = Queue.new 
+    @th_server = Thread.new(TCPServer.new(@tcp_port)) do |server|
       while !@stop do
-        @workers << (worker = Worker.new(@server.accept))
-        signal_available_worker(worker)
+        @workers << Worker.new(server.accept)
       end
-      @workers.map(&:close)
-      @server.close
+      close_workers
+      server.close
     end
+    LOGGER.info "Server started on port #{@tcp_port}"
+  end
+
+  def close_workers
+    loop do
+      @workers.pop(true).close
+    end
+  rescue ThreadError # empty queue
   end
 
   def stop!
@@ -50,36 +58,30 @@ class TCPWorkerPool
     @th_server.join
   end
 
-  def signal_available_worker(worker)
-    worker.ready = true
-    future = @worker_waiting_list.pop
-    if future
-      LOGGER.debug "Server has found an available worker #{worker.socket}"
-      worker.ready = false
-      future.success(worker) 
-    end
+  def acquire_worker
+    LOGGER.debug "looking for an available socket. #{@workers.size} already available"
+    begin
+      w=@workers.pop
+    end until !w.closed?
+    LOGGER.debug "found an available socket #{w.socket_id}"
+    w
   end
 
-  def wait_for_worker
-    LOGGER.debug "Server waiting for available worker"
-    @worker_waiting_list << Concurrent.future
-    @worker_waiting_list.last
-  end
-
-  def exec_on_worker(worker, args)
-    worker.run_task(*args)
-  ensure
-    signal_available_worker(worker)
+  def release_worker(worker)
+    LOGGER.debug "release worker #{worker.socket_id}"
+    @workers.push(worker) unless worker.closed?
   end
 
   def future(*args)
     LOGGER.debug "Server asked for #{args}"
-    ready_worker = @workers.first(&:ready)
-    if ready_worker
-      ready_worker.ready = false
-      Concurrent.future { exec_on_worker(ready_worker, args) }
-    else
-      wait_for_worker.then { |w| exec_on_worker(w, args) }
+    Concurrent.future do
+      w = acquire_worker
+      begin
+        LOGGER.debug "worker acquired: #{w.socket_id}"
+        w.run_task(*args)
+      ensure
+        release_worker(w)
+      end
     end
   end
 end

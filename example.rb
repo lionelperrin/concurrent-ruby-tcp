@@ -8,7 +8,7 @@ module RemoteFunctions
     @call_count += 1
     r = Random.new
     #Random failure
-    raise "Computation error" if r.rand < 0.1
+    raise RuntimeError, "eval_pi random failure" if r.rand < 0.1
     # computation
     (4.0/trial_count) * trial_count.times.count do
       r.rand**2+r.rand**2 < 1
@@ -50,7 +50,7 @@ def server_main
   trials_per_task = 1_000_000
   futures = task_count.times.map do
     server.future(:eval_pi, trials_per_task)
-      .rescue{ |e| LOGGER.debug "Error detected: #{e}"; nil }
+      .rescue{ |e| raise e unless e.is_a?(RuntimeError); LOGGER.debug "rescue expected error: #{e}"; nil }
   end
   pi = Concurrent.zip(*futures).then do |*values|
     v = values.compact
@@ -70,7 +70,7 @@ ensure
 end
 
 if $0 == __FILE__
-  LOGGER.level = Log4r::INFO
+  # LOGGER.level = Log4r::INFO
   if ARGV[0] == 'client'
     client_main(ARGV[1])
   else
