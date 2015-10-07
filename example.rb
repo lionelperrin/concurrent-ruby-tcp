@@ -2,13 +2,15 @@ require_relative 'lib/concurrent-ruby-tcp'
 
 TCP_PORT = 2_000
 
+$call_count = 0
+
 # shared functions
 module RemoteFunctions
   def eval_pi(trial_count)
-    @call_count += 1
+    $call_count += 1
     r = Random.new
-    #Random failure
-    raise RuntimeError, "eval_pi random failure" if r.rand < 0.1
+    # Random failure
+    # raise RuntimeError, "eval_pi random failure" if r.rand < 0.1
     # computation
     (4.0/trial_count) * trial_count.times.count do
       r.rand**2+r.rand**2 < 1
@@ -16,20 +18,15 @@ module RemoteFunctions
   end
 end
 
-# client class
-class MyTCPClient < TCPClient
-  attr_reader :call_count
-  def initialize(addr, port)
-    super(addr, port)
-    @call_count = 0
-  end
+# Pure functions
+class MyPureFunction < PureFunction
   include RemoteFunctions
 end
 
 def client_main(id)
   Log4r::NDC.push("client-#{id}")
-  c = MyTCPClient.new('localhost', TCP_PORT).tap(&:run)
-  LOGGER.info "exiting after #{c.call_count} call to eval_pi"
+  c = TCPClient.new('localhost', TCP_PORT).tap(&:run)
+  LOGGER.info "exiting after #{$call_count} call to eval_pi"
 rescue => e
   LOGGER.fatal "Thread exception #{e}\n#{e.backtrace.join("\n")}"
 ensure
@@ -49,7 +46,7 @@ def server_main
   task_count = 50
   trials_per_task = 1_000_000
   futures = task_count.times.map do
-    server.future(:eval_pi, trials_per_task)
+    Concurrent.future(server, &MyPureFunction.new(:eval_pi, trials_per_task){})
       .rescue{ |e| raise e unless e.is_a?(RuntimeError); LOGGER.debug "rescue expected error: #{e}"; nil }
   end
   pi = Concurrent.zip(*futures).then do |*values|

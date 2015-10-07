@@ -6,6 +6,25 @@ LOGGER = Log4r::Logger.new 'TCPWorkerPool'
 LOGGER.outputters = Log4r::Outputter.stdout
 Log4r::Outputter.stdout.formatter = Log4r::PatternFormatter.new :pattern => "%l %x: %m"
 
+class PureFunction < Proc
+  def initialize(*args)
+    @args = args
+    super(&Proc.new{})
+  end
+  def to_s
+    "#{super} #{@args}"
+  end
+  def call
+    @args.first.is_a?(Symbol) ? send(*@args) : @args.first.send(*@args[1..-1])
+  end
+  def _dump(_)
+    Marshal.dump(@args)
+  end
+  def self._load(args)
+    new(*Marshal.load(args), &Proc.new{})
+  end
+end
+
 class Worker
   def initialize(socket)
     LOGGER.debug "Server received new connection #{socket}"
@@ -20,13 +39,16 @@ class Worker
   def socket_id
     @socket.to_s
   end
-  def run_task(*args)
-    LOGGER.debug "Server sending #{args} to #{socket_id}"
-    Marshal.dump(args, @socket)
+  def run_task(func)
+    LOGGER.debug "Server sending #{func} to #{socket_id}"
+    Marshal.dump(func, @socket)
     res, exc = Marshal.load(@socket)
     LOGGER.debug "Server received #{res} #{exc} from #{socket_id}"
     raise exc if exc
     res
+  rescue => e
+    LOGGER.error "Worker#run_task: #{e}\n#{e.backtrace.join("\n")}"
+    raise e
   end
 end
 
@@ -72,18 +94,27 @@ class TCPWorkerPool
     @workers.push(worker) unless worker.closed?
   end
 
-  def future(*args)
-    LOGGER.debug "Server asked for #{args}"
-    Concurrent.future do
+  include Concurrent::ExecutorService
+  def post(func, *args, &task)
+    # replace function to execute with a remote call
+    p = Proc.new do
+      LOGGER.debug "Server#post(#{args}, #{task})"
       w = acquire_worker
       begin
         LOGGER.debug "worker acquired: #{w.socket_id}"
-        w.run_task(*args)
+        w.run_task(func)
       ensure
         release_worker(w)
       end
     end
+    # since acquiring a socket is blocking, use io executor
+    Concurrent.executor(:io).post(task, p, args) do |_task, _p, _args|
+      LOGGER.debug "server calling task #{task}"
+      _task.call(_p, *args)
+      LOGGER.debug "server calling task #{task} done"
+    end
   end
+
 end
 
 class TCPClient
@@ -91,16 +122,16 @@ class TCPClient
     @socket = TCPSocket.new(addr, port)
     LOGGER.info "Client connected to #{addr}:#{port}"
   end
-  def run_task(args)
-    [args.first.is_a?(Symbol) ? send(*args) : args.first.send(*args[1..-1]), nil]
+  def run_task(func)
+    [func.call, nil]
   rescue => e
     [nil, e]
   end
   def run
     while(!@socket.closed?) do
-      args = Marshal.load(@socket)
-      LOGGER.debug "Client received #{args}"
-      res = run_task(args)
+      func = Marshal.load(@socket)
+      LOGGER.debug "Client received #{func}"
+      res = run_task(func)
       LOGGER.debug "Client send results #{res}"
       Marshal.dump(res, @socket)
     end
