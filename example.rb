@@ -17,19 +17,20 @@ module RemoteFunctions
 end
 
 # client class
-class MyTCPClient < TCPClient
-  attr_reader :call_count
-  def initialize(addr, port)
-    super(addr, port)
+class RemoteCaller
+  attr_accessor :call_count
+  def initialize
     @call_count = 0
   end
+  include Concurrent::Edge::Remote
   include RemoteFunctions
 end
 
 def client_main(id)
   Log4r::NDC.push("client-#{id}")
-  c = MyTCPClient.new('localhost', TCP_PORT).tap(&:run)
-  LOGGER.info "exiting after #{c.call_count} call to eval_pi"
+  rcaller = RemoteCaller.new
+  c = Concurrent::Edge::TCPClient.new('localhost', TCP_PORT, rcaller).tap(&:run)
+  LOGGER.info "exiting after #{rcaller.call_count} call to eval_pi"
 rescue => e
   LOGGER.fatal "Thread exception #{e}\n#{e.backtrace.join("\n")}"
 ensure
@@ -43,13 +44,16 @@ end
 
 def server_main
   Log4r::NDC.push('server')
-  server = TCPWorkerPool.new(TCP_PORT)
+  rcaller = RemoteCaller.new
+  # use two local threads in addition to TCPWorkers
+  local_workers = 2.times.map{ |i| Concurrent::Edge::LocalWorker.new(rcaller, i.to_s) }
+  server = Concurrent::Edge::TCPWorkerPool.new(TCP_PORT, local_workers)
 
   # eval_pi using several remote call to eval_pi
   task_count = 50
   trials_per_task = 1_000_000
   futures = task_count.times.map do
-    server.future(:eval_pi, trials_per_task)
+    rcaller.future(server, :eval_pi, trials_per_task)
       .rescue{ |e| raise e unless e.is_a?(RuntimeError); LOGGER.debug "rescue expected error: #{e}"; nil }
   end
   pi = Concurrent.zip(*futures).then do |*values|
@@ -65,6 +69,7 @@ def server_main
 
   server.stop!
   children.each { |pid| Process.wait pid }
+  LOGGER.info "exiting after #{rcaller.call_count} call to eval_pi"
 ensure
   Log4r::NDC.pop
 end
