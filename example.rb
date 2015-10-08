@@ -32,7 +32,7 @@ def client_main(id)
   c = Concurrent::Edge::TCPClient.new('localhost', TCP_PORT, rcaller).tap(&:run)
   LOGGER.info "exiting after #{rcaller.call_count} call to eval_pi"
 rescue => e
-  LOGGER.fatal "Thread exception #{e}\n#{e.backtrace.join("\n")}"
+  LOGGER.fatal "client exception #{e}\n#{e.backtrace.join("\n")}"
 ensure
   Log4r::NDC.pop
 end
@@ -57,12 +57,12 @@ def server_main
       .rescue{ |e| raise e unless e.is_a?(RuntimeError); LOGGER.debug "rescue expected error: #{e}"; nil }
   end
   pi = Concurrent.zip(*futures).then do |*values|
-    v = values.compact
+    v = values.compact # remove nil values due to random failures
     v.reduce(:+) / v.size
   end
 
-  # start slowly slaves to check that tasks are shared
-  children = 4.times.map {|i| start_client(i).tap{ sleep 2 } }
+  # start slowly slaves to check that tasks are correctly load balanced
+  children = 4.times.map {|i| start_client(i).tap{ sleep 1 } }
   LOGGER.debug "children: #{children}"
 
   puts "pi evaluated to #{pi.value!}"
