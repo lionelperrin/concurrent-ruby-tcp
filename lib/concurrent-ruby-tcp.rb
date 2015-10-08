@@ -66,8 +66,9 @@ module Concurrent
     end
 
     class TCPWorkerPool
-      def initialize(tcp_port = 2000, extra_workers = [])
+      def initialize(tcp_port, default_executor = :io, extra_workers = [])
         @tcp_port = tcp_port
+        @default_executor = default_executor
         @workers = Queue.new 
         extra_workers.each{ |w| @workers << w }
         @th_server = Thread.new(TCPServer.new(@tcp_port)) do |server|
@@ -95,11 +96,11 @@ module Concurrent
       end
 
       def acquire_worker
-        LOGGER.debug "looking for an available socket. #{@workers.size} already available"
+        LOGGER.debug "looking for an available worker. #{@workers.size} already available"
         begin
           w=@workers.pop
         end until !w.closed?
-        LOGGER.debug "found an available socket #{w.name}"
+        LOGGER.debug "found an available worker #{w.name}"
         w
       end
 
@@ -110,7 +111,7 @@ module Concurrent
 
       def future(*args)
         LOGGER.debug "Server asked for #{args}"
-        Concurrent.future do
+        Concurrent.future(@default_executor) do
           w = acquire_worker
           begin
             LOGGER.debug "worker acquired: #{w.name}"
