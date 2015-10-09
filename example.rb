@@ -42,20 +42,7 @@ def start_client(id)
   Kernel.spawn(ENV, RbConfig.ruby, __FILE__, 'client', id.to_s, :out => :out, :err => :err)
 end
 
-def server_main
-  Log4r::NDC.push('server')
-  rcaller = RemoteCaller.new
-  # use two local threads in addition to TCPWorkers
-  local_workers = 2.times.map{ |i| Concurrent::Edge::LocalWorker.new(rcaller, i.to_s) }
-  server = Concurrent::Edge::TCPWorkerPool.new(
-    TCP_PORT, 
-    Concurrent::ThreadPoolExecutor.new(
-      max_threads: 8, # at most 8 threads for TCPWorkerPool
-      max_queue: 20,  # maximum 20 tasks per thread
-      fallback_policy: :caller_runs # execute in caller thread when no thread is available
-    ),
-    local_workers)
-
+def future_eval_pi(server, rcaller)
   # eval_pi using several remote call to eval_pi
   task_count = 50
   trials_per_task = 1_000_000
@@ -68,10 +55,31 @@ def server_main
     v.reduce(:+) / v.size
   end
 
+end
+
+def server_main
+  Log4r::NDC.push('server')
+  rcaller = RemoteCaller.new
+  # use two local threads in addition to TCPWorkers
+  local_workers = 2.times.map{ |i| Concurrent::Edge::LocalWorker.new(rcaller, i.to_s) }
+  server = Concurrent::Edge::TCPWorkerPool.new(
+    TCP_PORT, 
+    Concurrent::ThreadPoolExecutor.new(
+      max_threads: 8, # at most 8 threads for TCPWorkerPool
+      max_queue: 100,  # maximum 100 tasks queued
+      fallback_policy: :caller_runs # execute in caller thread when no thread is available
+    ),
+    local_workers)
+
+  LOGGER.info "Create futures"
+  pi = future_eval_pi(server, rcaller)
+  LOGGER.info "Futures created. #{rcaller.call_count} futures already executed."
+
   # start slowly slaves to check that tasks are correctly load balanced
   children = 4.times.map {|i| start_client(i).tap{ sleep 1 } }
   LOGGER.debug "children: #{children}"
 
+  LOGGER.info "Wait for future"
   puts "pi evaluated to #{pi.value!}"
 
   server.stop!
@@ -82,7 +90,7 @@ ensure
 end
 
 if $0 == __FILE__
-  # LOGGER.level = Log4r::INFO
+  LOGGER.level = Log4r::INFO
   if ARGV[0] == 'client'
     client_main(ARGV[1])
   else

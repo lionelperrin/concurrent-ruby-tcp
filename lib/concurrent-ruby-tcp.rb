@@ -4,13 +4,14 @@ require 'log4r'
 
 LOGGER = Log4r::Logger.new 'TCPWorkerPool'
 LOGGER.outputters = Log4r::Outputter.stdout
-Log4r::Outputter.stdout.formatter = Log4r::PatternFormatter.new :pattern => "%l %x: %m"
+Log4r::Outputter.stdout.formatter = Log4r::PatternFormatter.new :pattern => "%d %l %x: %m"
 
 module Concurrent
   module Edge
 
     module Remote
       def call(*args)
+        args.map(&:freeze) # do not allow parameters to be modified
         args.first.is_a?(Symbol) ? send(*args) : args.first.send(*args[1..-1])
       end
       def future(executor=:io, *args)
