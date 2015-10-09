@@ -9,7 +9,7 @@ Log4r::Outputter.stdout.formatter = Log4r::PatternFormatter.new :pattern => "%d 
 module Concurrent
   module Edge
 
-    module Remote
+    module Context
       def call(*args)
         args.map(&:freeze) # do not allow parameters to be modified
         args.first.is_a?(Symbol) ? send(*args) : args.first.send(*args[1..-1])
@@ -144,7 +144,7 @@ module Concurrent
           Marshal.dump(res, @socket)
         end
       rescue EOFError => e
-        # normal error: socket closed from remote head while Marshal.load is waiting for data
+        # normal error: socket closed from Context head while Marshal.load is waiting for data
         LOGGER.debug "Client disconnected by server"
       rescue => e
         LOGGER.error "#{e}\n#{e.backtrace.join("\n")}"

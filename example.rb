@@ -22,7 +22,7 @@ class RemoteCaller
   def initialize
     @call_count = 0
   end
-  include Concurrent::Edge::Remote
+  include Concurrent::Edge::Context
   include RemoteFunctions
 end
 
