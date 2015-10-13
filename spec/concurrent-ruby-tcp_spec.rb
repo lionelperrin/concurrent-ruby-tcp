@@ -24,23 +24,6 @@ module Concurrent
           expect { subject.call([1, 2, 3], :push, 4) }.to raise_error /frozen/
         end
       end
-
-      describe '#future' do
-        context 'given a \'standard\' ruby-concurrent executor' do
-          let(:executor) { :io }
-          it 'creates a regular future which calls methods in the current context' do
-            expect(subject).to receive(:test_method).with(1, 2, 3).and_return(4)
-            expect(subject.future(executor, :test_method, 1, 2, 3).value!).to eq(4)
-          end
-        end
-        context 'given a TCPWorkerPool executor' do
-          let(:executor) { TCPWorkerPool.new }
-          it 'creates the future using this executor' do
-            expect(executor).to receive(:future).with(:test_method, 1, 2, 3)
-            subject.future(executor, :test_method, 1, 2, 3)
-          end
-        end
-      end
     end
 
     describe TCPWorker do
@@ -170,31 +153,35 @@ module Concurrent
         end
       end
 
-      describe '#future' do
+      describe '#proc' do
         describe 'the returned value' do
-          let(:executor) { :fast }
           let(:call_args) { [1, :+, 2] }
-          subject { TCPWorkerPool.new(executor) }
-          it 'is a Concurrent::Future build with the specified executor' do
-            expect(Concurrent).to receive(:future).with(executor).and_call_original
-            f = subject.future(*call_args)
-            expect(f).to be_a Concurrent::Edge::Future
+          subject { TCPWorkerPool.new }
+          it 'is a Proc' do
+            expect(Proc).to receive(:new).and_call_original
+            f = subject.proc(*call_args)
+            expect(f).to be_a Proc
           end
           context 'when a worker is available' do
             let(:worker) { double('worker', name: 'fake_worker', closed?: false) }
-            subject { TCPWorkerPool.new(executor, [worker]) }
+            subject { TCPWorkerPool.new([worker]) }
             it 'acquires this worker and release it' do
               expect(subject).to receive(:acquire_worker).and_call_original.ordered
               expect(worker).to receive(:run_task).with(*call_args).and_return(3).ordered
               expect(subject).to receive(:release_worker).and_call_original.ordered
+              expect(subject.proc(*call_args).call).to eq(3)
+            end
 
-              expect(subject.future(*call_args).value!).to eq(3)
+            it 'can receive arguments' do
+              extra_args = [1, 2]
+              expect(worker).to receive(:run_task).with(*(call_args + extra_args)).and_return(3) 
+              expect(subject.proc(*call_args).call(*extra_args)).to eq(3)
             end
 
             context 'when worker#run_task raise an error' do
               it 'is raised by the future' do
                 expect(worker).to receive(:run_task).with(*call_args) { fail 'boom!' }
-                expect { subject.future(*call_args).value! }.to raise_error 'boom!'
+                expect { subject.proc(*call_args).call }.to raise_error 'boom!'
               end
             end
           end

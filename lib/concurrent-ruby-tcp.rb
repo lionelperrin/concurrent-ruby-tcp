@@ -11,15 +11,6 @@ module Concurrent
         args.map(&:freeze) # do not allow parameters to be modified
         args.first.is_a?(Symbol) ? send(*args) : args.first.send(*args[1..-1])
       end
-
-      def future(executor, *args)
-        case (executor)
-        when TCPWorkerPool
-          executor.future(*args)
-        else
-          Concurrent.future(executor) { call(*args) }
-        end
-      end
     end
 
     class TCPWorker
@@ -73,8 +64,7 @@ module Concurrent
 
     class TCPWorkerPool
       SELECT_TIMEOUT = 1
-      def initialize(default_executor = :io, extra_workers = [])
-        @default_executor = default_executor
+      def initialize(extra_workers = [])
         @workers = Queue.new
         extra_workers.each { |w| @workers << w }
       end
@@ -103,13 +93,14 @@ module Concurrent
         @th_server.join if @th_server
       end
 
-      def future(*args)
-        TCP_LOGGER.debug "Server asked for #{args}"
-        Concurrent.future(@default_executor) do
+      def proc(*fixed_args)
+        Proc.new do |*args|
+          _args = fixed_args + args # similar to curry
+          TCP_LOGGER.debug "Server asked for #{_args}"
           w = acquire_worker
           begin
             TCP_LOGGER.debug "worker acquired: #{w.name}"
-            w.run_task(*args)
+            w.run_task(*_args)
           ensure
             release_worker(w)
           end

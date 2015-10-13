@@ -23,6 +23,10 @@ class RemoteCaller
   def initialize
     @call_count = 0
   end
+  def average(*values)
+    v = values.compact # remove nil values due to random failures
+    v.reduce(:+) / v.size
+  end
   include Concurrent::Edge::Context
   include RemoteFunctions
 end
@@ -43,18 +47,15 @@ def start_client(id)
   Kernel.spawn(ENV, RbConfig.ruby, __FILE__, 'client', id.to_s, out: :out, err: :err)
 end
 
-def future_eval_pi(server, rcaller)
+def future_eval_pi(server)
   # eval_pi using several remote call to eval_pi
   task_count = 50
   trials_per_task = 1_000_000
   futures = task_count.times.map do
-    rcaller.future(server, :eval_pi, trials_per_task)
+    Concurrent.future( &server.proc(:eval_pi, trials_per_task) )
     .rescue { |e| fail e unless e.is_a?(RuntimeError); LOGGER.debug "rescue expected error: #{e}"; nil }
   end
-  pi = Concurrent.zip(*futures).then do |*values|
-    v = values.compact # remove nil values due to random failures
-    v.reduce(:+) / v.size
-  end
+  Concurrent.zip(*futures).then(&server.proc(:average))
 end
 
 def server_main
@@ -71,7 +72,7 @@ def server_main
     local_workers).tap { |s| s.listen(TCP_PORT) }
 
   LOGGER.info 'Create futures'
-  pi = future_eval_pi(server, rcaller)
+  pi = future_eval_pi(server)
   LOGGER.info "Futures created. #{rcaller.call_count} futures already executed."
 
   # start slowly slaves to check that tasks are correctly load balanced
