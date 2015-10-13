@@ -2,19 +2,17 @@ require 'socket'
 require 'concurrent-edge'
 require 'log4r'
 
-LOGGER = Log4r::Logger.new 'TCPWorkerPool'
-LOGGER.outputters = Log4r::Outputter.stdout
-Log4r::Outputter.stdout.formatter = Log4r::PatternFormatter.new :pattern => "%d %l %x: %m"
-
 module Concurrent
   module Edge
+    TCP_LOGGER = Log4r::Logger.new 'concurrent-ruby-tcp'
 
     module Context
       def call(*args)
         args.map(&:freeze) # do not allow parameters to be modified
         args.first.is_a?(Symbol) ? send(*args) : args.first.send(*args[1..-1])
       end
-      def future(executor=:io, *args)
+
+      def future(executor, *args)
         case (executor)
         when TCPWorkerPool
           executor.future(*args)
@@ -26,60 +24,109 @@ module Concurrent
 
     class TCPWorker
       def initialize(socket)
-        LOGGER.debug "Server received new connection #{socket}"
+        TCP_LOGGER.debug "Server received new connection #{socket}"
         @socket = socket
       end
+
       def closed?
         @socket.closed?
       end
+
       def close
         @socket.close
       end
+
       def name
         @socket.to_s
       end
+
       def run_task(*args)
-        LOGGER.debug "Server sending #{args} to #{name}"
+        TCP_LOGGER.debug "Server sending #{args} to #{name}"
         Marshal.dump(args, @socket)
         res, exc = Marshal.load(@socket)
-        LOGGER.debug "Server received #{res} #{exc} from #{name}"
-        raise exc if exc
+        TCP_LOGGER.debug "Server received #{res} #{exc} from #{name}"
+        fail exc if exc
         res
       end
     end
 
     class LocalWorker
       attr_reader :name
-      def initialize(eval_context, name = self.to_s)
+      def initialize(eval_context, name = to_s)
         @name = name
         @context = eval_context
-        LOGGER.debug "create local worker #{name}"
+        TCP_LOGGER.debug "create local worker #{name}"
       end
+
       def closed?
         false
       end
+
       def close
       end
+
       def run_task(*args)
-        LOGGER.debug "Server sending #{args} to local worker #{@name}"
+        TCP_LOGGER.debug "Server sending #{args} to local worker #{@name}"
         @context.call(*args)
       end
     end
 
     class TCPWorkerPool
-      def initialize(tcp_port, default_executor = :io, extra_workers = [])
-        @tcp_port = tcp_port
+      SELECT_TIMEOUT = 1
+      def initialize(default_executor = :io, extra_workers = [])
         @default_executor = default_executor
-        @workers = Queue.new 
-        extra_workers.each{ |w| @workers << w }
-        @th_server = Thread.new(TCPServer.new(@tcp_port)) do |server|
-          while !@stop do
-            @workers << TCPWorker.new(server.accept)
+        @workers = Queue.new
+        extra_workers.each { |w| @workers << w }
+      end
+
+      def listen(tcp_port)
+        fail "already listening on #{@tcp_port}" if @tcp_port
+        @tcp_port = tcp_port
+        @tcp_server = TCPServer.new(@tcp_port)
+        @th_server = Thread.new(@tcp_server) do |server|
+          begin
+            loop do
+              @workers << TCPWorker.new(tcp_accept(server))
+            end
+          rescue Errno::EBADF, IOError => e
+            # server closed
+            TCP_LOGGER.debug("server.accept received #{e}")
+          ensure
+            close_workers
           end
-          close_workers
-          server.close
         end
-        LOGGER.info "Server started on port #{@tcp_port}"
+        TCP_LOGGER.info "Server started on port #{@tcp_port}"
+      end
+
+      def stop!
+        @tcp_server.close if @tcp_server
+        @th_server.join if @th_server
+      end
+
+      def future(*args)
+        TCP_LOGGER.debug "Server asked for #{args}"
+        Concurrent.future(@default_executor) do
+          w = acquire_worker
+          begin
+            TCP_LOGGER.debug "worker acquired: #{w.name}"
+            w.run_task(*args)
+          ensure
+            release_worker(w)
+          end
+        end
+      end
+
+      private
+
+      def tcp_accept(serv)
+        begin # emulate blocking accept
+          sock = serv.accept_nonblock
+        rescue IO::WaitReadable, Errno::EINTR
+          # wake up after 1 second or if a connection is available
+          IO.select([serv], [], [], SELECT_TIMEOUT)
+          retry
+        end
+        sock
       end
 
       def close_workers
@@ -89,38 +136,20 @@ module Concurrent
       rescue ThreadError # empty queue
       end
 
-      def stop!
-        @stop = true
-        # make sure that server is not stucked in @server.accept
-        TCPSocket.new('localhost', @tcp_port).close
-        @th_server.join
-      end
-
       def acquire_worker
-        LOGGER.debug "looking for an available worker. #{@workers.size} already available"
-        begin
-          w=@workers.pop
-        end until !w.closed?
-        LOGGER.debug "found an available worker #{w.name}"
+        TCP_LOGGER.debug "looking for an available worker. #{@workers.size} already available"
+        w = nil
+        loop do
+          w = @workers.pop
+          break unless w.closed?
+        end
+        TCP_LOGGER.debug "found an available worker #{w.name}"
         w
       end
 
       def release_worker(worker)
-        LOGGER.debug "release worker #{worker.name}"
+        TCP_LOGGER.debug "release worker #{worker.name}"
         @workers.push(worker) unless worker.closed?
-      end
-
-      def future(*args)
-        LOGGER.debug "Server asked for #{args}"
-        Concurrent.future(@default_executor) do
-          w = acquire_worker
-          begin
-            LOGGER.debug "worker acquired: #{w.name}"
-            w.run_task(*args)
-          ensure
-            release_worker(w)
-          end
-        end
       end
     end
 
@@ -128,29 +157,29 @@ module Concurrent
       def initialize(addr, port, eval_context)
         @socket = TCPSocket.new(addr, port)
         @context = eval_context
-        LOGGER.info "Client connected to #{addr}:#{port}"
+        TCP_LOGGER.info "Client connected to #{addr}:#{port}"
       end
+
       def run_task(args)
         [@context.call(*args), nil]
       rescue => e
         [nil, e]
       end
+
       def run
-        while(!@socket.closed?) do
+        until @socket.closed?
           args = Marshal.load(@socket)
-          LOGGER.debug "Client received #{args}"
+          TCP_LOGGER.debug "Client received #{args}"
           res = run_task(args)
-          LOGGER.debug "Client send results #{res}"
+          TCP_LOGGER.debug "Client send results #{res}"
           Marshal.dump(res, @socket)
         end
-      rescue EOFError => e
+      rescue Errno::ECONNRESET, EOFError => e
         # normal error: socket closed from Context head while Marshal.load is waiting for data
-        LOGGER.debug "Client disconnected by server"
+        TCP_LOGGER.debug 'Client disconnected by server'
       rescue => e
-        LOGGER.error "#{e}\n#{e.backtrace.join("\n")}"
+        TCP_LOGGER.error "#{e}\n#{e.backtrace.join("\n")}"
       end
     end
-
   end
 end
-
