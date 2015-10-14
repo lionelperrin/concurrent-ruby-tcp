@@ -63,13 +63,7 @@ def server_main
   rcaller = RemoteCaller.new
   # use two local threads in addition to TCPWorkers
   local_workers = 2.times.map { |i| Concurrent::Edge::LocalWorker.new(rcaller, i.to_s) }
-  server = Concurrent::Edge::TCPWorkerPool.new(
-    Concurrent::ThreadPoolExecutor.new(
-      max_threads: 8, # at most 8 threads for TCPWorkerPool
-      max_queue: 100, # maximum 100 tasks queued
-      fallback_policy: :caller_runs # execute in caller thread when no thread is available
-    ),
-    local_workers).tap { |s| s.listen(TCP_PORT) }
+  server = Concurrent::Edge::TCPWorkerPool.new(local_workers).tap { |s| s.listen(TCP_PORT) }
 
   LOGGER.info 'Create futures'
   pi = future_eval_pi(server)

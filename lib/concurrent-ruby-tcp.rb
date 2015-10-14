@@ -101,6 +101,10 @@ module Concurrent
           begin
             TCP_LOGGER.debug "worker acquired: #{w.name}"
             w.run_task(*_args)
+          rescue EOFError => e
+            TCP_LOGGER.debug "client disconnected: #{e}"
+            w.close
+            raise
           ensure
             release_worker(w)
           end
@@ -167,9 +171,11 @@ module Concurrent
         end
       rescue Errno::ECONNRESET, EOFError => e
         # normal error: socket closed from Context head while Marshal.load is waiting for data
-        TCP_LOGGER.debug 'Client disconnected by server'
+        TCP_LOGGER.debug "Client disconnected by server #{e}"
       rescue => e
         TCP_LOGGER.error "#{e}\n#{e.backtrace.join("\n")}"
+      ensure
+        @socket.close
       end
     end
   end
