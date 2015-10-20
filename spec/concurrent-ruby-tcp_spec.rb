@@ -217,7 +217,9 @@ module Concurrent
               client_socket.close
 
               expect(worker).to receive(:close).and_call_original
-              expect { subject.proc(*call_args).call }.to raise_error(EOFError)
+              expect { subject.proc(*call_args).call }.to raise_error do |e|
+                expect(e).to be_a(EOFError) | be_a(Errno::ECONNABORTED)
+              end
 
               # worker is removed from available workers
               expect(subject.instance_variable_get(:@workers)).to be_empty

@@ -78,7 +78,7 @@ module Concurrent
             loop do
               @workers << TCPWorker.new(tcp_accept(server))
             end
-          rescue Errno::EBADF, IOError => e
+          rescue Errno::EBADF, Errno::ENOTSOCK, IOError => e
             # server closed
             TCP_LOGGER.debug("server.accept received #{e}")
           ensure
@@ -101,7 +101,7 @@ module Concurrent
           begin
             TCP_LOGGER.debug "worker acquired: #{w.name}"
             w.run_task(*_args)
-          rescue EOFError => e
+          rescue EOFError, Errno::ECONNABORTED => e
             TCP_LOGGER.debug "client disconnected: #{e}"
             w.close
             raise
@@ -169,7 +169,7 @@ module Concurrent
           TCP_LOGGER.debug "Client send results #{res}"
           Marshal.dump(res, @socket)
         end
-      rescue Errno::ECONNRESET, EOFError => e
+      rescue Errno::ECONNRESET, Errno::ECONNABORTED, EOFError => e
         # normal error: socket closed from Context head while Marshal.load is waiting for data
         TCP_LOGGER.debug "Client disconnected by server #{e}"
       rescue => e
