@@ -1,4 +1,4 @@
-require 'concurrent-ruby-tcp'
+require 'concurrent-ruby-tcp' # rubocop:disable Style/FileName
 
 def expect_block_to_be_done_in(time, &block)
   expect(Thread.new(&block).join(time)).not_to be_nil
@@ -23,10 +23,10 @@ module Concurrent
           allow(subject).to receive(:push_4) do |val|
             val.push(4)
           end
-          expect { subject.call(:push_4, [1, 2, 3]) }.to raise_error /frozen/
+          expect { subject.call(:push_4, [1, 2, 3]) }.to raise_error(/frozen/)
         end
         it 'raise error when modifying instance' do
-          expect { subject.call([1, 2, 3], :push, 4) }.to raise_error /frozen/
+          expect { subject.call([1, 2, 3], :push, 4) }.to raise_error(/frozen/)
         end
       end
     end
@@ -35,11 +35,11 @@ module Concurrent
       let(:socket) { double('socket') }
       subject { TCPWorker.new(socket) }
 
-      [:closed?, :close].each do |_alias|
-        describe "##{_alias}" do
-          it "is an alias for socket.##{_alias}" do
-            expect(socket).to receive(_alias).and_return(true)
-            expect(subject.send(_alias)).to eq(true)
+      [:closed?, :close].each do |sym_alias|
+        describe "##{sym_alias}" do
+          it "is an alias for socket.##{sym_alias}" do
+            expect(socket).to receive(sym_alias).and_return(true)
+            expect(subject.send(sym_alias)).to eq(true)
           end
         end
       end
@@ -109,7 +109,7 @@ module Concurrent
           expect(TCPServer).to receive(:new).with(tcp_port)
             .and_return(double('tcp_server'))
           subject.listen(tcp_port)
-          expect { subject.listen(tcp_port) }.to raise_error /already listening/
+          expect { subject.listen(tcp_port) }.to raise_error(/already listening/)
         end
 
         let(:incoming) { 3.times.map { |i| double("socket#{i}") } }
@@ -157,7 +157,7 @@ module Concurrent
               client_th = Thread.new(TCPSocket.new('localhost', tcp_port)) do |c|
                 begin
                   c.read
-                rescue Errno::ECONNRESET
+                rescue Errno::ECONNRESET # rubocop:disable Lint/HandleExceptions
                 end
               end
             ensure
@@ -174,7 +174,6 @@ module Concurrent
         let(:call_args) { [1, :+, 2] }
         subject { TCPWorkerPool.new }
         it 'returns a Proc' do
-          expect(Proc).to receive(:new).and_call_original
           f = subject.proc(*call_args)
           expect(f).to be_a Proc
         end
@@ -190,7 +189,7 @@ module Concurrent
 
           it 'can receive arguments' do
             extra_args = [1, 2]
-            expect(worker).to receive(:run_task).with(*(call_args + extra_args)).and_return(3) 
+            expect(worker).to receive(:run_task).with(*(call_args + extra_args)).and_return(3)
             expect(subject.proc(*call_args).call(*extra_args)).to eq(3)
           end
 
@@ -207,7 +206,7 @@ module Concurrent
               subject = TCPWorkerPool.new
               subject.listen(tcp_port)
               client_socket = TCPSocket.new('localhost', tcp_port)
-              
+
               # make sure that connection is accepted by server
               worker = subject.send(:acquire_worker)
               expect(worker).not_to be_nil
@@ -253,7 +252,7 @@ module Concurrent
           expect(subject.run_task(args)).to eq([4, nil])
         end
         it 'rescue any non fatal exception' do
-          expect(context).to receive(:call).with(*args){ fail 'boom!' }
+          expect(context).to receive(:call).with(*args) { fail 'boom!' }
           expect(subject.run_task(args)).to match_array([nil, kind_of(RuntimeError)])
         end
       end
@@ -272,7 +271,7 @@ module Concurrent
           subject.run
         end
         it 'stops when the server closes the connection before accept' do
-          REPEAT_COUNT.times do |i|
+          REPEAT_COUNT.times do
             server = TCPServer.new(tcp_port)
             th_client = Thread.new(TCPClient.new(host, tcp_port, context)) do |client|
               client.run
@@ -282,7 +281,7 @@ module Concurrent
           end
         end
         it 'stops when the server closes an established connection' do
-          REPEAT_COUNT.times do |i|
+          REPEAT_COUNT.times do
             server = TCPServer.new(tcp_port)
             th_client = Thread.new(TCPClient.new(host, tcp_port, context)) do |client|
               client.run

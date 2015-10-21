@@ -1,4 +1,4 @@
-require_relative '../lib/concurrent-ruby-tcp'
+require_relative '../lib/concurrent-ruby-tcp' # rubocop:disable Style/FileName
 require 'log4r'
 
 TCP_PORT = 2_000
@@ -13,12 +13,14 @@ class ExampleContext
   def initialize
     @call_count = 0
   end
+
   # shared functions are expected to be 'pure': without side effects
   # there is no synchronisation mechanism for global/shared variables
   def average(*values)
     v = values.compact # remove nil values due to random failures
     v.reduce(:+) / v.size
   end
+
   def eval_pi(trial_count)
     @call_count += 1 # local state (not shared between executors)
     r = Random.new
@@ -38,7 +40,7 @@ end
 def client_main(id)
   Log4r::NDC.push("client-#{id}")
   rcaller = ExampleContext.new
-  c = Concurrent::Edge::TCPClient.new('localhost', TCP_PORT, rcaller).tap(&:run)
+  Concurrent::Edge::TCPClient.new('localhost', TCP_PORT, rcaller).tap(&:run)
   LOGGER.info "exiting after #{rcaller.call_count} call to eval_pi"
 rescue => e
   LOGGER.fatal "client exception #{e}\n#{e.backtrace.join("\n")}"
@@ -56,13 +58,16 @@ def distributed_eval_pi(server)
   trials_per_task = 1_000_000
   futures = task_count.times.map do
     # Concurrent.future should be given a block build using `server.proc` so that it can be remotely distributed
-    Concurrent.future( &server.proc(:eval_pi, trials_per_task) )
-    .rescue { |e| fail e unless e.is_a?(RuntimeError); LOGGER.debug "rescue expected error: #{e}"; nil }
+    Concurrent.future(&server.proc(:eval_pi, trials_per_task))
+    .rescue do |e|
+      fail e unless e.is_a?(RuntimeError)
+      LOGGER.debug "rescue expected error: #{e}"
+      nil
+    end
   end
   # usual Concurrent.future methods are available: for instance `#rescue` or `#then`
   Concurrent.zip(*futures).then(&server.proc(:average))
 end
-
 
 def start_clients(client_count)
   clients = client_count.times.map do |id|
@@ -115,4 +120,3 @@ if $PROGRAM_NAME == __FILE__
     server_main
   end
 end
-

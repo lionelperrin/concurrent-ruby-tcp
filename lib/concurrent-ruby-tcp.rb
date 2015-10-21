@@ -1,3 +1,4 @@
+# rubocop:disable Style/FileName
 require 'socket'
 require 'concurrent-edge'
 require 'log4r'
@@ -94,13 +95,13 @@ module Concurrent
       end
 
       def proc(*fixed_args)
-        Proc.new do |*args|
-          _args = fixed_args + args # similar to curry
-          TCP_LOGGER.debug "Server asked for #{_args}"
+        lambda do |*args|
+          all_args = fixed_args + args # similar to curry
+          TCP_LOGGER.debug "Server asked for #{all_args}"
           w = acquire_worker
           begin
             TCP_LOGGER.debug "worker acquired: #{w.name}"
-            w.run_task(*_args)
+            w.run_task(*all_args)
           rescue EOFError, Errno::ECONNABORTED => e
             TCP_LOGGER.debug "client disconnected: #{e}"
             w.close
@@ -128,7 +129,8 @@ module Concurrent
         loop do
           @workers.pop(true).close
         end
-      rescue ThreadError # empty queue
+      rescue ThreadError # rubocop:disable Lint/HandleExceptions
+        # empty queue
       end
 
       def acquire_worker
@@ -174,6 +176,7 @@ module Concurrent
         TCP_LOGGER.debug "Client disconnected by server #{e}"
       rescue => e
         TCP_LOGGER.error "#{e}\n#{e.backtrace.join("\n")}"
+        raise
       ensure
         @socket.close
       end
