@@ -70,10 +70,10 @@ module Concurrent
         extra_workers.each { |w| @workers << w }
       end
 
-      def listen(tcp_port)
-        fail "already listening on #{@tcp_port}" if @tcp_port
-        @tcp_port = tcp_port
-        @tcp_server = TCPServer.new(@tcp_port)
+      def listen(*tcp_server_args)
+        fail "already listening on #{@tcp_server_args}" if @tcp_server_args
+        @tcp_server_args = tcp_server_args
+        @tcp_server = TCPServer.new(*@tcp_server_args)
         @th_server = Thread.new(@tcp_server) do |server|
           begin
             loop do
@@ -86,7 +86,7 @@ module Concurrent
             close_workers
           end
         end
-        TCP_LOGGER.info "Server started on port #{@tcp_port}"
+        TCP_LOGGER.info "Server started on #{@tcp_server_args}"
       end
 
       def stop!
