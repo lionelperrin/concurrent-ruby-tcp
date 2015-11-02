@@ -65,9 +65,11 @@ module Concurrent
 
     class TCPWorkerPool
       SELECT_TIMEOUT = 1
-      def initialize(extra_workers = [])
+      attr_reader :workers_status
+      def initialize
+        @setup = []
+        @workers_status = []
         @workers = Queue.new
-        extra_workers.each { |w| @workers << w }
       end
 
       def listen(*tcp_server_args)
@@ -77,7 +79,7 @@ module Concurrent
         @th_server = Thread.new(@tcp_server) do |server|
           begin
             loop do
-              @workers << TCPWorker.new(tcp_accept(server))
+              add_worker TCPWorker.new(tcp_accept(server))
             end
           rescue Errno::EBADF, Errno::ENOTSOCK, IOError => e
             # server closed
@@ -87,6 +89,16 @@ module Concurrent
           end
         end
         TCP_LOGGER.info "Server started on #{@tcp_server_args}"
+      end
+
+      def add_worker(w)
+        @workers_status << [w.name, @setup.map { |s| { call: s, returned: w.run_task(*s) } }]
+        @workers << w
+      end
+
+      def setup_workers_with(*args)
+        fail 'Workers must be setup before being added' unless @workers.empty?
+        @setup << args
       end
 
       def stop!

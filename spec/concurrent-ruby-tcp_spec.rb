@@ -6,9 +6,9 @@ end
 
 module Concurrent
   module Edge
+    class ContextTest; include Context; end
     # TCP_LOGGER.outputters = Log4r::Outputter.stdout
     describe Context do
-      class ContextTest; include Context; end
       subject { ContextTest.new }
 
       describe '#call' do
@@ -69,7 +69,6 @@ module Concurrent
     end
 
     describe LocalWorker do
-      class ContextTest; include Context; end
       let(:context) { ContextTest.new }
       subject { LocalWorker.new(context) }
 
@@ -96,6 +95,8 @@ module Concurrent
 
     describe TCPWorkerPool do
       let(:tcp_port) { 2000 }
+      let(:worker1) { LocalWorker.new(ContextTest.new, 'worker1') }
+      let(:worker2) { LocalWorker.new(ContextTest.new, 'worker2') }
       describe '#listen' do
         it 'starts a tcp server on given port' do
           expect(Thread).to receive(:new) # disable thread creation
@@ -170,6 +171,42 @@ module Concurrent
         end
       end
 
+      describe '#setup_workers_with' do
+        it 'fails if some workers are already available' do
+          subject.add_worker(worker1)
+          expect { subject.setup_workers_with(1, :+, 1) }.to raise_exception(/setup before/)
+        end
+        it 'register a call to be performed when workers are added' do
+          expect(worker1).to receive(:run_task).with(1, :+, 1).and_call_original.ordered
+          expect(worker1).to receive(:run_task).with(2, :+, 2).and_call_original.ordered
+          expect(worker2).to receive(:run_task).with(1, :+, 1).and_call_original.ordered
+          expect(worker2).to receive(:run_task).with(2, :+, 2).and_call_original.ordered
+          subject.setup_workers_with(1, :+, 1)
+          subject.setup_workers_with(2, :+, 2)
+          subject.add_worker(worker1)
+          subject.add_worker(worker2)
+        end
+      end
+
+      describe '#workers_status' do
+        it 'returns the initialization status of workers' do
+          subject.setup_workers_with(1, :+, 1)
+          subject.setup_workers_with(2, :+, 2)
+          subject.add_worker(worker1)
+          subject.add_worker(worker2)
+          expect(subject.workers_status).to eq([
+            ['worker1', [
+              { call: [1, :+, 1], returned: 2 },
+              { call: [2, :+, 2], returned: 4 }
+            ]],
+            ['worker2', [
+              { call: [1, :+, 1], returned: 2 },
+              { call: [2, :+, 2], returned: 4 }
+            ]]
+          ])
+        end
+      end
+
       describe '#proc' do
         let(:call_args) { [1, :+, 2] }
         subject { TCPWorkerPool.new }
@@ -179,7 +216,7 @@ module Concurrent
         end
         context 'when a worker is available' do
           let(:worker) { double('worker', name: 'fake_worker', closed?: false) }
-          subject { TCPWorkerPool.new([worker]) }
+          subject { TCPWorkerPool.new.tap { |s| s.add_worker worker } }
           it 'acquires this worker and release it' do
             expect(subject).to receive(:acquire_worker).and_call_original.ordered
             expect(worker).to receive(:run_task).with(*call_args).and_return(3).ordered
